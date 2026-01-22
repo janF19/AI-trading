@@ -1,0 +1,39 @@
+micronaut:
+  application:
+    name: ai-trading-platform
+  server:
+    port: 8083
+  serde:
+    serialization:
+      inclusion: always
+
+kafka:
+  bootstrap:
+    servers: localhost:9092
+
+datasources:
+  default:
+    url: jdbc:ch://localhost:8123/default?compress=0&decompress=0&ssl=false
+    driverClassName: com.clickhouse.jdbc.ClickHouseDriver
+    username: ${CLICKHOUSE_USER:default}
+    password: ${CLICKHOUSE_PASSWORD:changeme}
+    connection-test-query: SELECT 1
+    pool-name: ClickHousePool
+    maximum-pool-size: 5
+    minimum-idle: 1
+
+twelvedata:
+  api:
+    key: ${TWELVEDATA_API_KEY:your-key-here}
+
+alphavantage:
+  api:
+    key: ${ALPHAVANTAGE_API_KEY:your-key-here}
+
+finnhub:
+  api:
+    key: ${FINNHUB_API_KEY:your-key-here}
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:your-key-here}
