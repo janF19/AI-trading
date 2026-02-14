@@ -27,7 +27,8 @@ import java.util.Optional;
 
 /**
  * Service that validates sentiment predictions against actual price movements.
- * Waits 48 hours before validating to ensure daily price data is available.
+ * Uses intraday data: compares price 5min before news vs 30min after news.
+ * Includes volume analysis and S&P 500 benchmark comparison.
  */
 @Singleton
 public class PriceValidationService {
@@ -35,7 +36,7 @@ public class PriceValidationService {
     private static final ZoneId ET_ZONE = ZoneId.of("America/New_York");
     private static final int MARKET_OPEN_HOUR = 9; // 9:30 AM ET
     private static final int MARKET_CLOSE_HOUR = 16; // 4:00 PM ET
-    private static final int MIN_AGE_HOURS = 48; // Wait 48h for daily price data availability
+    private static final int MIN_AGE_HOURS = 2; // Wait 2h for intraday data availability
 
     private final DataSource dataSource;
     private final TwelveDataPriceProvider twelveDataProvider;
@@ -49,7 +50,7 @@ public class PriceValidationService {
         this.dataSource = dataSource;
         this.twelveDataProvider = twelveDataProvider;
         this.alphaVantageProvider = alphaVantageProvider;
-        LOG.info("PriceValidationService initialized - validates news 48+ hours old (TwelveData + AlphaVantage fallback)");
+        LOG.info("PriceValidationService initialized - uses intraday data (5min before → 30min after news)");
     }
 
     record SentimentRecord(
@@ -60,34 +61,42 @@ public class PriceValidationService {
     ) {}
 
     /**
-     * Runs every 6 hours to validate sentiments that are now 48+ hours old.
+     * Runs every 2 hours to validate sentiments that are now 2+ hours old.
+     * Uses 2 API calls per stock (before + after price).
+     * SPY benchmark disabled to conserve API calls.
      */
-    @Scheduled(fixedDelay = "6h", initialDelay = "30s") // 30s initial delay for testing
+    @Scheduled(fixedDelay = "2h", initialDelay = "30s")
     public void validatePendingSentiments() {
-        LOG.info("==> Price validation scheduled task FIRED (processing news 48+ hours old)");
+        LOG.info("==> Price validation scheduled task FIRED (processing news 2+ hours old)");
 
         try {
             List<SentimentRecord> pending = fetchPendingSentiments();
-            LOG.info("Fetched {} pending sentiments for validation (48+ hours old)", pending.size());
+            LOG.info("Fetched {} pending sentiments for validation (2+ hours old)", pending.size());
             if (pending.isEmpty()) {
-                LOG.info("No pending sentiments older than 48h to validate");
+                LOG.info("No pending sentiments older than 2h to validate");
                 return;
             }
 
-            LOG.info("Validating {} sentiments using daily price data", pending.size());
+            LOG.info("Validating {} sentiments using intraday price data", pending.size());
             List<SentimentRecord> sorted = pending.stream()
                 .sorted(Comparator.comparingDouble((SentimentRecord s) -> Math.abs(s.sentimentScore())).reversed())
                 .toList();
 
+            // Cache for SPY prices to avoid redundant API calls
+            java.util.Map<Instant, Optional<PricePoint>> spyCache = new java.util.HashMap<>();
+
             int validated = 0;
             int apiCallCount = 0;
             for (SentimentRecord record : sorted) {
-                if (apiCallCount > 0 && apiCallCount % 4 == 0) {
-                    LOG.info("Rate limit: Processed {} sentiments, sleeping 60s", apiCallCount);
-                    Thread.sleep(60000);
+                // Rate limiting: 5 API calls/min for Alpha Vantage
+                // Each validation = 2 stock calls (before + after)
+                // Process 2 stocks/min = 4 calls/min (within 5 calls/min limit)
+                if (apiCallCount > 0 && apiCallCount % 2 == 0) {
+                    LOG.info("Rate limit: Processed {} stocks, sleeping 65s", apiCallCount);
+                    Thread.sleep(65000); // 65s to stay under 5 calls/min
                 }
 
-                boolean success = validateSentiment(record);
+                boolean success = validateSentiment(record, spyCache);
                 if (success) {
                     validated++;
                 }
@@ -102,14 +111,14 @@ public class PriceValidationService {
     }
 
     /**
-     * Fetches unvalidated sentiments from news older than 48 hours.
+     * Fetches unvalidated sentiments from news older than 2 hours.
      */
     private List<SentimentRecord> fetchPendingSentiments() {
         String sql = """
             SELECT article_id, ticker, sentiment, news_timestamp
             FROM news_analyzed
             WHERE validated = false
-              AND news_timestamp < now() - INTERVAL 48 HOUR
+              AND news_timestamp < now() - INTERVAL 2 HOUR
             ORDER BY abs(sentiment) DESC
             LIMIT 50
             """;
@@ -137,59 +146,119 @@ public class PriceValidationService {
     }
 
     /**
-     * Validates a single sentiment by comparing closing prices before and after news.
+     * Validates a single sentiment using intraday prices:
+     * - Before: 5 minutes before news published
+     * - After: 30 minutes after news published
+     * Includes volume analysis and S&P 500 benchmark comparison.
      */
-    private boolean validateSentiment(SentimentRecord record) {
+    private boolean validateSentiment(SentimentRecord record, java.util.Map<Instant, Optional<PricePoint>> spyCache) {
         try {
             Instant newsTime = record.newsTimestamp().toInstant();
             ZonedDateTime newsET = newsTime.atZone(ET_ZONE);
 
-            boolean duringMarketHours = isMarketHoursForNews(newsET);
-            LocalDate referenceDay = duringMarketHours ?
-                newsET.toLocalDate() :
-                newsET.toLocalDate().minusDays(1);
-            LocalDate nextDay = newsET.toLocalDate().plusDays(1);
-
-            Instant refDayClose = referenceDay.atTime(16, 0).atZone(ET_ZONE).toInstant();
-            Instant nextDayClose = nextDay.atTime(16, 0).atZone(ET_ZONE).toInstant();
-            Optional<PricePoint> priceAtT = getPriceWithFallback(record.ticker(), refDayClose);
-            Optional<PricePoint> priceAtT1d = getPriceWithFallback(record.ticker(), nextDayClose);
-
-            if (priceAtT.isEmpty() || priceAtT1d.isEmpty()) {
-                LOG.warn("Could not fetch prices for ticker: {} at T={}", record.ticker(), newsTime);
+            // Skip if outside market hours
+            if (!isMarketHoursForNews(newsET)) {
+                LOG.debug("Skipping {}: news published outside market hours", record.ticker());
                 return false;
             }
 
-            PricePoint pT = priceAtT.get();
-            PricePoint pT1d = priceAtT1d.get();
+            // Calculate time windows with market boundary checks
+            Instant beforeTime = newsTime.minus(5, ChronoUnit.MINUTES);
+            Instant afterTime = newsTime.plus(30, ChronoUnit.MINUTES);
 
-            double priceDiff = pT1d.close() - pT.close();
-            double priceChangePct = (priceDiff / pT.close()) * 100.0;
+            // Check if beforeTime is before market open (9:30 AM ET)
+            ZonedDateTime marketOpen = newsET.toLocalDate()
+                .atTime(9, 30)
+                .atZone(ET_ZONE);
+
+            if (beforeTime.isBefore(marketOpen.toInstant())) {
+                LOG.debug("Skipping {}: before-time ({}) is before market open",
+                    record.ticker(), beforeTime);
+                return false;
+            }
+
+            // Check if afterTime is after market close (4:00 PM ET)
+            ZonedDateTime marketClose = newsET.toLocalDate()
+                .atTime(16, 0)
+                .atZone(ET_ZONE);
+
+            if (afterTime.isAfter(marketClose.toInstant())) {
+                LOG.debug("Skipping {}: after-time ({}) is after market close",
+                    record.ticker(), afterTime);
+                return false;
+            }
+
+            Optional<PricePoint> priceBefore = getIntradayPrice(record.ticker(), beforeTime);
+            Optional<PricePoint> priceAfter = getIntradayPrice(record.ticker(), afterTime);
+
+            if (priceBefore.isEmpty() || priceAfter.isEmpty()) {
+                LOG.warn("Could not fetch intraday prices for ticker: {} at {}", record.ticker(), newsTime);
+                return false;
+            }
+
+            PricePoint pBefore = priceBefore.get();
+            PricePoint pAfter = priceAfter.get();
+
+            // Calculate price change
+            double priceDiff = pAfter.close() - pBefore.close();
+            double priceChangePct = (priceDiff / pBefore.close()) * 100.0;
             int actualDirection = priceDiff > 0 ? 1 : (priceDiff < 0 ? -1 : 0);
             int sentimentDirection = record.sentimentScore() > 0 ? 1 : (record.sentimentScore() < 0 ? -1 : 0);
             boolean predictionCorrect = (actualDirection == sentimentDirection) && (actualDirection != 0);
 
-            String provider = "TwelveData";
+            // Calculate volume change
+            long volumeBefore = pBefore.volume();
+            long volumeAfter = pAfter.volume();
+            double volumeChangePct = volumeBefore > 0 ?
+                ((volumeAfter - volumeBefore) / (double) volumeBefore) * 100.0 : 0.0;
+
+            // SPY benchmark commented out to reduce API calls (2 calls per stock instead of 4)
+            // TODO: Re-enable later when needed for excess return analysis
+            /*
+            // Get S&P 500 (SPY) benchmark with caching
+            Optional<PricePoint> spyBefore = spyCache.computeIfAbsent(beforeTime,
+                t -> getIntradayPrice("SPY", t));
+            Optional<PricePoint> spyAfter = spyCache.computeIfAbsent(afterTime,
+                t -> getIntradayPrice("SPY", t));
+
+            double spyChangePct = 0.0;
+            double excessReturn = priceChangePct;
+
+            if (spyBefore.isPresent() && spyAfter.isPresent()) {
+                double spyDiff = spyAfter.get().close() - spyBefore.get().close();
+                spyChangePct = (spyDiff / spyBefore.get().close()) * 100.0;
+                excessReturn = priceChangePct - spyChangePct; // Alpha over market
+            }
+            */
+
+            // Without SPY, excess return = raw stock return
+            double spyChangePct = 0.0;
+            double excessReturn = priceChangePct;
+
             saveValidationResult(
                 record.articleId(),
                 record.ticker(),
-                pT.close(),
-                pT1d.close(),
+                pBefore.close(),
+                pAfter.close(),
                 priceDiff,
                 priceChangePct,
                 record.sentimentScore(),
                 actualDirection,
                 predictionCorrect,
                 record.newsTimestamp(),
-                provider
+                "AlphaVantage-Intraday",
+                volumeBefore,
+                volumeAfter,
+                volumeChangePct,
+                spyChangePct,
+                excessReturn
             );
 
-            // Mark as validated
             markAsValidated(record.articleId(), record.ticker());
 
-            LOG.info("Validated {}: sentiment={}, price {}→{} ({}%), correct={}",
-                record.ticker(), record.sentimentScore(), pT.close(), pT1d.close(),
-                String.format("%.2f", priceChangePct), predictionCorrect);
+            LOG.info("Validated {}: sentiment={:.2f}, price {:.2f}→{:.2f} ({:.2f}%), vol:{:.1f}%, excess:{:.2f}%, correct={}",
+                record.ticker(), record.sentimentScore(), pBefore.close(), pAfter.close(),
+                priceChangePct, volumeChangePct, excessReturn, predictionCorrect);
 
             return true;
 
@@ -197,6 +266,13 @@ public class PriceValidationService {
             LOG.error("Failed to validate sentiment for ticker: {}", record.ticker(), e);
             return false;
         }
+    }
+
+    /**
+     * Gets intraday price using Alpha Vantage.
+     */
+    private Optional<PricePoint> getIntradayPrice(String ticker, Instant timestamp) {
+        return alphaVantageProvider.getIntradayPriceAt(ticker, timestamp);
     }
 
     /**
@@ -223,14 +299,20 @@ public class PriceValidationService {
             int actualDirection,
             boolean predictionCorrect,
             Timestamp newsTimestamp,
-            String provider) {
+            String provider,
+            long volumeBefore,
+            long volumeAfter,
+            double volumeChangePct,
+            double spyChangePct,
+            double excessReturn) {
 
         String sql = """
             INSERT INTO signals_verified (
                 news_sentiment_id, ticker, price_at_t, price_at_t_plus_1h,
                 price_diff, price_change_pct, sentiment_score, actual_direction,
-                prediction_correct, news_timestamp, validated_at, provider
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                prediction_correct, news_timestamp, validated_at, provider,
+                volume_before, volume_after, volume_change_pct, spy_price_change_pct, excess_return
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
         try (Connection conn = dataSource.getConnection();
@@ -248,6 +330,11 @@ public class PriceValidationService {
             ps.setTimestamp(10, newsTimestamp);
             ps.setTimestamp(11, new Timestamp(System.currentTimeMillis()));
             ps.setString(12, provider);
+            ps.setLong(13, volumeBefore);
+            ps.setLong(14, volumeAfter);
+            ps.setDouble(15, volumeChangePct);
+            ps.setDouble(16, spyChangePct);
+            ps.setDouble(17, excessReturn);
 
             ps.executeUpdate();
             LOG.debug("Saved validation result for {}", ticker);

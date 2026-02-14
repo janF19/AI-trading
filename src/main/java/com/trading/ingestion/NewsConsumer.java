@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
 
@@ -32,31 +33,51 @@ public class NewsConsumer {
         try (Connection conn = dataSource.getConnection()) {
             JsonNode root = objectMapper.readTree(newsJson);
 
+            int saved = 0;
+            int skipped = 0;
+
             if (root.isArray()) {
                 for (JsonNode article : root) {
-                    saveArticle(conn, article);
+                    if (saveArticle(conn, article)) {
+                        saved++;
+                    } else {
+                        skipped++;
+                    }
                 }
-                LOG.info("Saved {} articles to ClickHouse", root.size());
+                LOG.info("Processed {} articles: {} saved, {} skipped (duplicates)",
+                    root.size(), saved, skipped);
             } else {
-                saveArticle(conn, root);
-                LOG.info("Saved 1 article to ClickHouse");
+                if (saveArticle(conn, root)) {
+                    saved++;
+                    LOG.info("Saved 1 article to ClickHouse");
+                } else {
+                    skipped++;
+                    LOG.info("Skipped 1 duplicate article");
+                }
             }
         } catch (Exception e) {
             LOG.error("Error saving news to ClickHouse", e);
         }
     }
 
-    private void saveArticle(Connection conn, JsonNode article) throws Exception {
+    /**
+     * Saves article to ClickHouse if it doesn't already exist.
+     * Uses efficient primary key lookup (id is in ORDER BY).
+     *
+     * @return true if article was saved, false if duplicate was skipped
+     */
+    private boolean saveArticle(Connection conn, JsonNode article) throws Exception {
         String articleId = article.has("id") ? article.get("id").asText() : String.valueOf(article.hashCode());
 
-        // Check if article already exists to avoid unnecessary writes
-        try (PreparedStatement checkPs = conn.prepareStatement(
-                "SELECT count() FROM news_raw WHERE id = ?")) {
+        // Check if article already exists using primary key lookup (EFFICIENT - uses index)
+        String checkSql = "SELECT 1 FROM news_raw WHERE id = ? LIMIT 1";
+        try (PreparedStatement checkPs = conn.prepareStatement(checkSql)) {
             checkPs.setString(1, articleId);
-            var rs = checkPs.executeQuery();
-            if (rs.next() && rs.getInt(1) > 0) {
-                LOG.debug("Article {} already exists, skipping", articleId);
-                return;
+            try (ResultSet rs = checkPs.executeQuery()) {
+                if (rs.next()) {
+                    LOG.debug("Article {} already exists, skipping", articleId);
+                    return false;
+                }
             }
         }
 
@@ -85,6 +106,7 @@ public class NewsConsumer {
 
             ps.executeUpdate();
             LOG.debug("Saved article {} - will be picked up by batch analyzer", articleId);
+            return true;
         }
     }
 }

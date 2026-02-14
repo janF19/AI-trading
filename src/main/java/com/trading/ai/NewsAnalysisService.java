@@ -36,7 +36,7 @@ public class NewsAnalysisService {
         LOG.info("NewsAnalysisService initialized");
     }
 
-    @Scheduled(fixedDelay = "15m", initialDelay = "10s")
+    @Scheduled(fixedDelay = "5m", initialDelay = "10s")
     public void processPendingNews() {
         LOG.info("==> Sentiment analysis scheduled task FIRED");
         try {
@@ -53,7 +53,19 @@ public class NewsAnalysisService {
                 .map(n -> new NewsArticle(n.id(), n.title(), n.summary()))
                 .toList();
 
-            Map<String, SentimentResult> results = geminiService.analyzeBatch(articles);
+            Map<String, SentimentResult> results = null;
+            try {
+                results = geminiService.analyzeBatch(articles);
+            } catch (Exception e) {
+                LOG.error("Gemini API call failed: {}", e.getMessage());
+                // Don't mark as processed if API fails - we want to retry later
+                return;
+            }
+
+            // Mark all articles as processed since Gemini call succeeded
+            for (NewsWithTimestamp news : pending) {
+                markAsProcessed(news.id());
+            }
 
             for (Map.Entry<String, SentimentResult> entry : results.entrySet()) {
                 String articleId = entry.getKey();
@@ -88,7 +100,7 @@ public class NewsAnalysisService {
         String sql = """
             SELECT id, title, JSONExtractString(data, 'summary') as summary, timestamp
             FROM news_raw
-            WHERE id NOT IN (SELECT article_id FROM news_analyzed)
+            WHERE processed = false
             ORDER BY timestamp ASC
             LIMIT ?
             """;
@@ -138,6 +150,21 @@ public class NewsAnalysisService {
             LOG.info("Saved analysis for {} tickers", result.tickers().size());
         } catch (Exception e) {
             LOG.error("Failed to save analysis", e);
+        }
+    }
+
+    private void markAsProcessed(String articleId) {
+        String sql = """
+            ALTER TABLE news_raw UPDATE processed = true WHERE id = ?
+            """;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, articleId);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            LOG.error("Failed to mark article {} as processed", articleId, e);
         }
     }
 }

@@ -24,57 +24,57 @@ public class DatabaseInitializer {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
 
-            String sql = """
-                CREATE TABLE IF NOT EXISTS news_raw (
-                    id String,
-                    title String,
-                    timestamp DateTime,
-                    source String,
-                    data String
-                ) ENGINE = ReplacingMergeTree()
-                ORDER BY id
-                SETTINGS index_granularity = 8192
-            """;
+            String sql = "CREATE TABLE IF NOT EXISTS news_raw (" +
+                "id String, " +
+                "title String, " +
+                "timestamp DateTime, " +
+                "source String, " +
+                "data String, " +
+                "processed Boolean DEFAULT false" +
+                ") ENGINE = ReplacingMergeTree() " +
+                "ORDER BY id " +
+                "SETTINGS index_granularity = 8192";
 
             stmt.execute(sql);
             LOG.info("ClickHouse table 'news_raw' initialized.");
 
-            String analysisSql = """
-                CREATE TABLE IF NOT EXISTS news_analyzed (
-                    article_id String,
-                    ticker String,
-                    sentiment Float64,
-                    reasoning String,
-                    analyzed_at DateTime,
-                    news_timestamp DateTime,
-                    validated Boolean DEFAULT false
-                ) ENGINE = MergeTree()
-                ORDER BY (ticker, analyzed_at)
-                SETTINGS index_granularity = 8192
-            """;
+            String analysisSql = "CREATE TABLE IF NOT EXISTS news_analyzed (" +
+                "article_id String, " +
+                "ticker String, " +
+                "sentiment Float64, " +
+                "reasoning String, " +
+                "analyzed_at DateTime, " +
+                "news_timestamp DateTime, " +
+                "validated Boolean DEFAULT false" +
+                ") ENGINE = MergeTree() " +
+                "ORDER BY (ticker, analyzed_at) " +
+                "SETTINGS index_granularity = 8192";
 
             stmt.execute(analysisSql);
             LOG.info("ClickHouse table 'news_analyzed' initialized.");
 
-            String signalsSql = """
-                CREATE TABLE IF NOT EXISTS signals_verified (
-                    id UUID DEFAULT generateUUIDv4(),
-                    news_sentiment_id String,
-                    ticker String,
-                    price_at_t Float64,
-                    price_at_t_plus_1h Float64,
-                    price_diff Float64,
-                    price_change_pct Float64,
-                    sentiment_score Float64,
-                    actual_direction Int8,
-                    prediction_correct Boolean,
-                    news_timestamp DateTime,
-                    validated_at DateTime,
-                    provider String
-                ) ENGINE = MergeTree()
-                ORDER BY (ticker, news_timestamp)
-                SETTINGS index_granularity = 8192
-            """;
+            String signalsSql = "CREATE TABLE IF NOT EXISTS signals_verified (" +
+                "id UUID DEFAULT generateUUIDv4(), " +
+                "news_sentiment_id String, " +
+                "ticker String, " +
+                "price_at_t Float64, " +
+                "price_at_t_plus_1h Float64, " +
+                "price_diff Float64, " +
+                "price_change_pct Float64, " +
+                "sentiment_score Float64, " +
+                "actual_direction Int8, " +
+                "prediction_correct Boolean, " +
+                "news_timestamp DateTime, " +
+                "validated_at DateTime, " +
+                "provider String, " +
+                "volume_before Int64, " +
+                "volume_after Int64, " +
+                "volume_change_pct Float64, " +
+                "spy_price_change_pct Float64, " +
+                "excess_return Float64" +
+                ") ENGINE = MergeTree() " +
+                "ORDER BY (ticker, news_timestamp) " +
+                "SETTINGS index_granularity = 8192";
 
             stmt.execute(signalsSql);
             LOG.info("ClickHouse table 'signals_verified' initialized.");

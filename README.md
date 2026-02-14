@@ -1,59 +1,59 @@
 # AI Trading Analyzer
 
-## O projektu
+## About the Project
 
-Mikroslužba postavená nad frameworkem Micronaut, která využívá Kafku pro zpracování dat.
+A microservice built on the Micronaut framework that uses Kafka for data processing.
 
-## Co služba dělá
+## What the Service Does
 
-Služba sbírá data o zprávách a pomocí LLM API automaticky určuje:
-- **Sentiment zprávy** (pozitivní/negativní/neutrální)
-- **Akciový titul**, kterého se zpráva týká
+The service collects news data and uses LLM API to automatically determine:
+- **News sentiment** (positive/negative/neutral)
+- **Stock ticker** that the news relates to
 
-Následně získává aktuální data o ceně dané akcie a vyhodnocuje pohyb ceny v souvislosti se zprávou.
+It then retrieves current price data for the given stock and evaluates price movement in relation to the news.
 
-## Technologie
+## Technologies
 
-- **Micronaut** - framework pro mikroslužby
-- **Kafka** - messaging a zpracování dat
-- **LLM API** - analýza sentimentu a identifikace akcií
-- **Dashboard** - jednoduchý webový dashboard pro zobrazení výsledků
+- **Micronaut** - microservices framework
+- **Kafka** - messaging and data processing
+- **LLM API** - sentiment analysis and stock identification
+- **Dashboard** - simple web dashboard for displaying results
 
 
- **Projekt vyžaduje API klíče:**
-- LLM API klíč (např. Google)
-- API klíč pro získání cen akcií
+ **Project requires API keys:**
+- LLM API key (e.g., Google)
+- API key for retrieving stock prices
 
-Vzhledem k využití bezplatných API není důraz na rychlou odezvu - služba primárně slouží ke sběru a analýze dat.
+Due to the use of free APIs, there is no emphasis on fast response times - the service primarily serves to collect and analyze data.
 
-## Konfigurace
+## Configuration
 
-Projekt vyžaduje následující API klíče. Nastavte je jako **environment variables**:
+The project requires the following API keys. Set them as **environment variables**:
 
 ```bash
-# Google Gemini API pro analýzu sentimentu
+# Google Gemini API for sentiment analysis
 export GEMINI_API_KEY=your-key-here
 
-# API pro získání cen akcií (stačí jeden)
+# API for retrieving stock prices (one is sufficient)
 export TWELVEDATA_API_KEY=your-key-here
 export ALPHAVANTAGE_API_KEY=your-key-here
 export FINNHUB_API_KEY=your-key-here
 
-# Database (volitelné, výchozí hodnoty fungují s docker-compose)
+# Database (optional, default values work with docker-compose)
 export CLICKHOUSE_USER=default
 export CLICKHOUSE_PASSWORD=clickhouse123
 ```
 
-### Jak získat API klíče:
+### How to obtain API keys:
 - **Gemini**: https://makersuite.google.com/app/apikey
 - **TwelveData**: https://twelvedata.com/
 - **Alpha Vantage**: https://www.alphavantage.co/support/#api-key
 - **Finnhub**: https://finnhub.io/
 
-## Spuštění
+## Running
 
-1. Nastavte environment variables (viz sekce Konfigurace)
-2. Spusťte Kafka a ClickHouse: `docker-compose up -d`
-3. Spusťte aplikaci: `./mvnw mn:run`
-4. Dashboard je dostupný na: `http://localhost:8083/analytics/dashboard`
+1. Set environment variables (see Configuration section)
+2. Start Kafka and ClickHouse: `docker-compose up -d`
+3. Run the application: `./mvnw mn:run`
+4. Dashboard is available at: `http://localhost:8083/analytics/dashboard`
 

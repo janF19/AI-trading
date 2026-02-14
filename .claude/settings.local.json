@@ -4,7 +4,8 @@
       "Bash(mvn clean:*)",
       "Bash(docker exec:*)",
       "Bash(mvn compile:*)",
-      "Bash(jps:*)"
+      "Bash(jps:*)",
+      "Bash(docker-compose up:*)"
     ],
     "deny": [],
     "ask": []

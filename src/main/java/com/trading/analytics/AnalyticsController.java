@@ -35,7 +35,7 @@ public class AnalyticsController {
         }
     }
 
-    @Get("/api/signal-accuracy")
+    @Get("  ")
     public SignalAccuracyMetrics getSignalAccuracy() {
         LOG.info("Fetching signal accuracy metrics");
         return analyticsService.getSignalAccuracyMetrics();

@@ -245,13 +245,14 @@ public class AnalyticsService {
                 }
             }
 
-            // Sentiment distribution
+            // Sentiment distribution (last 7 days)
             String sentimentSql = """
-                SELECT 
+                SELECT
                     SUM(CASE WHEN sentiment > 0.2 THEN 1 ELSE 0 END) as positive,
                     SUM(CASE WHEN sentiment < -0.2 THEN 1 ELSE 0 END) as negative,
                     SUM(CASE WHEN sentiment >= -0.2 AND sentiment <= 0.2 THEN 1 ELSE 0 END) as neutral
                 FROM news_analyzed
+                WHERE analyzed_at >= now() - INTERVAL 7 DAY
             """;
             
             try (PreparedStatement stmt = conn.prepareStatement(sentimentSql);
@@ -266,13 +267,14 @@ public class AnalyticsService {
                 }
             }
 
-            // Top tickers by news volume
+            // Top tickers by news volume (last 7 days)
             List<NewsSentimentMetrics.TickerNewsVolume> topTickers = new ArrayList<>();
             String tickersSql = """
-                SELECT 
+                SELECT
                     ticker,
                     COUNT(*) as news_count
                 FROM news_analyzed
+                WHERE analyzed_at >= now() - INTERVAL 7 DAY
                 GROUP BY ticker
                 ORDER BY news_count DESC
                 LIMIT 10

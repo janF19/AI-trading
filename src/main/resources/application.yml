@@ -16,7 +16,7 @@ datasources:
     url: jdbc:ch://localhost:8123/default?compress=0&decompress=0&ssl=false
     driverClassName: com.clickhouse.jdbc.ClickHouseDriver
     username: ${CLICKHOUSE_USER:default}
-    password: ${CLICKHOUSE_PASSWORD:changeme}
+    password: ${CLICKHOUSE_PASSWORD:clickhouse123}
     connection-test-query: SELECT 1
     pool-name: ClickHousePool
     maximum-pool-size: 5
@@ -24,16 +24,17 @@ datasources:
 
 twelvedata:
   api:
-    key: ${TWELVEDATA_API_KEY:your-key-here}
+    key: ${TWELVEDATA_API_KEY}
 
-alphavantage:
+polygon:
   api:
-    key: ${ALPHAVANTAGE_API_KEY:your-key-here}
+    key: ${POLYGON_API_KEY}
+    key2: ${POLYGON_API_KEY2:}
 
 finnhub:
   api:
-    key: ${FINNHUB_API_KEY:your-key-here}
+    key: ${FINNHUB_API_KEY}
 
 gemini:
   api:
-    key: ${GEMINI_API_KEY:your-key-here}
+    key: ${GEMINI_API_KEY}

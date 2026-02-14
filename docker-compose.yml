@@ -43,6 +43,8 @@ services:
         hard: 262144
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-config/disable-logs.xml:/etc/clickhouse-server/config.d/disable-logs.xml
+      - ./clickhouse-config/network.xml:/etc/clickhouse-server/config.d/network.xml
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest

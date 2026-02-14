@@ -45,11 +45,6 @@ public class NewsProducer {
             LOG.info("Successfully fetched and sent news to Kafka");
         } catch (Exception e) {
             LOG.error("Failed to fetch news from Finnhub", e);
-            String mockNews = String.format(
-                    "[{\"id\":\"%s\", \"headline\":\"Market Update\", \"summary\":\"Demo news article\", \"datetime\":%d}]",
-                    UUID.randomUUID(), Instant.now().getEpochSecond()
-            );
-            newsClient.sendNews(UUID.randomUUID().toString(), mockNews);
         }
     }
 }
